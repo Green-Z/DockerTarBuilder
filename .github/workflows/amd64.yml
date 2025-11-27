@@ -5,7 +5,7 @@ on:
       docker_images:
         description: '请填写docker镜像名称 多个用英文逗号分开'
         required: true
-        default: 'alpine:latest'  # 设置默认的 Docker 镜像列表
+        default: 'alpine:latest'
 
 jobs:
   pull_and_package:
@@ -15,30 +15,51 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Clean up Docker to free space
+    # === 释放 GitHub Actions 磁盘空间（非常关键） ===
+    - name: Free disk space
       run: |
-          docker system prune -a -f
-          docker volume prune -f
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/lib/node_modules
+        sudo rm -rf /opt/ghc
+        docker system prune -af
+        docker volume prune -f
+        df -h
 
-    - name: Pull Docker Images and Package
+    # === 逐个拉取、保存、压缩镜像，避免占用过多磁盘 ===
+    - name: Pull and save images
       run: |
         images="${{ github.event.inputs.docker_images }}"
-        IFS=',' read -r -a image_array <<< "$images"
-        for image in "${image_array[@]}"; do
-          docker pull "${image}" --platform "linux/amd64"
-          docker save "${image}" -o "${image//\//_}-amd64.tar"
+        IFS=',' read -r -a array <<< "$images"
+        mkdir saved
+
+        for image in "${array[@]}"; do
+          img="$(echo $image | xargs)"
+          echo "Pulling $img ..."
+          docker pull "$img" --platform linux/amd64
+
+          file="${img//\//_}-amd64.tar"
+          docker save "$img" -o "$file"
+
+          echo "Compressing $file ..."
+          gzip "$file"
+
+          mv "$file.gz" saved/
+
+          # 删除 Docker 缓存，避免空间爆炸
+          docker image rm "$img" || true
+          docker system prune -af || true
+          df -h
         done
 
-    - name: Compress the TAR files
-      run: tar -czf x86-64-images.tar.gz *-amd64.tar
+    - name: Create final package
+      run: |
+        tar -czf x86-64-images.tar.gz saved
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: docker-images-tar
         path: x86-64-images.tar.gz
-        retention-days: 1  # 将保留天数设置为 1 天 最多可设置90天
-
-    - name: Clean up intermediate files
-      run: |
-        rm *-amd64.tar
+        retention-days: 1
