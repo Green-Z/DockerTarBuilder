@@ -37,7 +37,7 @@ jobs:
         for image in "${array[@]}"; do
           img="$(echo $image | xargs)"
           echo "Pulling $img ..."
-          docker pull "$img" --platform linux/amd64
+          docker pull --platform  "$img" linux/amd64
 
           file="${img//\//_}-amd64.tar"
           docker save "$img" -o "$file"
